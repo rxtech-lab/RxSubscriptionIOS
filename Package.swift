@@ -4,8 +4,8 @@ import PackageDescription
 let package = Package(
     name: "RxSubscriptionIOS",
     platforms: [
-        .iOS(.v26),
-        .macOS(.v26),
+        .iOS("26.0"),
+        .macOS("26.0"),
     ],
     products: [
         .library(name: "RxSubscriptionIOS", targets: ["RxSubscriptionIOS"]),

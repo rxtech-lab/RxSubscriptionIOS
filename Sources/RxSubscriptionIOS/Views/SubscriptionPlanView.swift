@@ -26,7 +26,7 @@ public struct SubscriptionPlanView<Header: View>: View {
             }
             .refreshable { await model.load(force: true) }
             .task { await model.load() }
-            .onChange(of: model.plans) { plans in
+            .onChange(of: model.plans) { _, plans in
                 if selectedPlanID == nil {
                     let recommended = plans.first(where: { isRecommended($0) })
                     selectedPlanID = (recommended ?? plans.first)?.id
