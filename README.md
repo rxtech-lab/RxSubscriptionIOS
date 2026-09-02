@@ -7,11 +7,15 @@
 - reusable SwiftUI plan, top-up, usage, balance, and balance-history screens;
 - a section-selectable paywall with a host-app supplied SwiftUI header.
 
-The package supports iOS 16+, macOS 13+, and Swift 5.9+.
+The package requires iOS 26+, macOS 26+, and Swift 5.9+.
 
 ## Add the package
 
-In Xcode, choose **File → Add Package Dependencies → Add Local…** and select this folder. Import the library where it is used:
+```swift
+.package(url: "https://github.com/rxtech-lab/RxSubscriptionIOS.git", from: "0.2.0")
+```
+
+Or in Xcode, **File → Add Package Dependencies…** with that URL. Import the library where it is used:
 
 ```swift
 import RxSubscriptionIOS
@@ -19,7 +23,31 @@ import RxSubscriptionIOS
 
 ## Configure a client
 
-Create one client for the currently signed-in RxLab user. The API key controls whether the server uses sandbox or production data.
+Create one client for the currently signed-in RxLab user. The key controls whether the server uses sandbox or production data.
+
+Which initializer you want depends on the kind of key you hold. **In an app, use a publishable key.**
+
+### Publishable key — for apps
+
+A publishable key is safe to ship inside a binary because it does nothing on its own. Every request also carries the signed-in user's rxlab access token, and the server acts only for whoever that token identifies — so a key lifted out of your app grants an attacker nothing they did not already have.
+
+```swift
+let subscriptions = Client(
+    serverURL: URL(string: "https://subscription.example.com")!,
+    publishableKey: configuration.subscriptionPublishableKey,
+    rxlabUserID: session.userID,
+    email: session.email,
+    userToken: { forceRefresh in
+        try await session.accessToken(forceRefresh: forceRefresh)
+    }
+)
+```
+
+The `userToken` closure is called before every request, and called again with `forceRefresh: true` if the server rejects the token — so an access token that expired while a screen sat open recovers without the user noticing. Your app's existing session machinery stays the only thing that knows how to refresh.
+
+Publishable keys reach the read and purchase endpoints: catalog, entitlements, usage, balances, ledger, consumption, invoices, purchases, coupon validation, checkout, and the App Store bridge. Crediting a balance, recording usage, and the whole reservation family answer `403 insufficient_key_scope` — those belong on a server.
+
+### Secret key — for servers
 
 ```swift
 let subscriptions = Client(
@@ -31,7 +59,7 @@ let subscriptions = Client(
 )
 ```
 
-Do not place an unrestricted or unrelated server credential in an app bundle. Mobile app secrets can be extracted. Use a dedicated, revocable application key for this backend contract and rotate it if the app is compromised.
+A secret key reaches every endpoint and names whichever user it likes, so it must never ship in an app bundle — mobile app secrets can be extracted, and this one can credit any balance for any user.
 
 ## SwiftUI views
 
@@ -97,6 +125,16 @@ let outcome = try await subscriptions.purchaseApple(
 let restored = try await subscriptions.restoreApplePurchases()
 ```
 
+Start `observeTransactionUpdates()` once at launch and hold the task for the lifetime of the session:
+
+```swift
+transactionObserver = subscriptions.observeTransactionUpdates { _ in
+    Task { await store.refresh() }
+}
+```
+
+Renewals, Ask-to-Buy approvals, purchases made on another device, and interrupted flows all arrive on `Transaction.updates` rather than as the result of `purchaseApple`. Without an observer they are never finished, so StoreKit re-delivers them on every launch. The backend still learns about them from App Store Server Notifications either way; this just keeps the app in step.
+
 Enable the **In-App Purchase** capability in the containing app target. Products and Notifications V2 still need to be configured in App Store Connect and in the RxSubscription console.
 
 ## Client API
@@ -112,7 +150,7 @@ The client covers the backend's complete public API surface.
 | Stripe | `checkoutPlan`, `checkoutTopUp`, `billingPortal`, `validateCoupon`, `invoices` |
 | Purchases | `purchases` |
 | App Store bridge | `appleAccountToken`, `setAppleConsumptionConsent`, `submitAppleTransaction` |
-| StoreKit | `storeProducts`, `purchaseApple`, `restoreApplePurchases` |
+| StoreKit | `storeProducts`, `purchaseApple`, `restoreApplePurchases`, `observeTransactionUpdates` |
 
 Metadata values use the package's `JSONValue` type. Balance and usage mutations preserve the server's idempotency contract. In particular, supply stable idempotency keys when retrying balance mutations or reservation operations.
 
@@ -145,4 +183,4 @@ The backend returns usage denials with HTTP 402. `recordUsage` decodes those res
 swift test
 ```
 
-The test suite verifies authentication and user scoping, StoreKit catalog decoding, error payloads, HTTP 402 usage behavior, date handling, formatting, and request/response coverage for every public backend route.
+The test suite verifies authentication and user scoping, StoreKit catalog decoding, error payloads, HTTP 402 usage behavior, date handling, formatting, and request/response coverage for every public backend route. It also covers the publishable-key path: that both credentials are sent, that a 401 triggers exactly one refreshed retry and no more, that a secret-key client is never retried, and that a failed token lookup surfaces as `ClientError.userTokenUnavailable` rather than as a network error.

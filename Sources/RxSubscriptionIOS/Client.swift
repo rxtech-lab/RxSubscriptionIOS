@@ -12,6 +12,13 @@ public struct UserIdentity: Hashable, Sendable {
     }
 }
 
+/// Hands the client a currently valid rxlab access token for the signed-in user.
+///
+/// Called before every request made with a publishable key, and called again
+/// with `forceRefresh: true` if the server rejects the token, so the app's own
+/// refresh machinery stays the single owner of the session.
+public typealias UserTokenProvider = @Sendable (_ forceRefresh: Bool) async throws -> String
+
 public enum ClientError: Error, LocalizedError {
     case invalidConfiguration(String)
     case invalidURL
@@ -19,6 +26,7 @@ public enum ClientError: Error, LocalizedError {
     case server(statusCode: Int, payload: APIErrorPayload?, responseBody: String?)
     case storeProductNotFound(String)
     case unverifiedStoreTransaction
+    case userTokenUnavailable(any Error)
 
     public var errorDescription: String? {
         switch self {
@@ -29,6 +37,8 @@ public enum ClientError: Error, LocalizedError {
             return payload?.errorDescription ?? payload?.error ?? body ?? "The subscription request failed."
         case .storeProductNotFound(let id): return "App Store product not found: \(id)"
         case .unverifiedStoreTransaction: return "StoreKit could not verify the transaction on this device."
+        case .userTokenUnavailable(let error):
+            return "Could not read the signed-in user's session: \(error.localizedDescription)"
         }
     }
 }
@@ -37,6 +47,18 @@ public enum ClientError: Error, LocalizedError {
 ///
 /// Create one client for the signed-in user and pass it directly to the package's
 /// SwiftUI views. The backend API key determines sandbox versus production.
+///
+/// Which initializer you use depends on the kind of key you hold:
+///
+/// - ``init(serverURL:publishableKey:rxlabUserID:email:displayName:userToken:session:)``
+///   is the one an app wants. A publishable key is safe to ship in a binary
+///   because it does nothing on its own: every request also carries the
+///   signed-in user's access token, and the server acts only for whoever that
+///   token identifies.
+/// - ``init(serverURL:apiKey:rxlabUserID:email:displayName:session:)`` takes a
+///   secret key, which reaches every endpoint and names its own user. That
+///   belongs on a server. Shipping one inside an app lets anyone who extracts
+///   it grant themselves anything.
 @MainActor
 public final class Client {
     public let serverURL: URL
@@ -46,7 +68,12 @@ public final class Client {
     private let session: URLSession
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let userTokenProvider: UserTokenProvider?
 
+    /// Creates a client backed by a secret, server-to-server API key.
+    ///
+    /// - Warning: A secret key must not ship inside an application binary. Use
+    ///   a publishable key for that.
     public init(
         serverURL: URL,
         apiKey: String,
@@ -65,6 +92,40 @@ public final class Client {
         self.session = session
         self.encoder = JSONEncoder()
         self.decoder = Self.makeDecoder()
+        self.userTokenProvider = nil
+    }
+
+    /// Creates a client backed by a publishable key and the signed-in user's session.
+    ///
+    /// `rxlabUserID` is still sent so requests keep their existing shape, but
+    /// the server no longer takes the app's word for it: the user comes from
+    /// the access token, and a request naming somebody else is refused. Pass
+    /// the same id the token was issued for.
+    ///
+    /// - Parameter userToken: Returns a currently valid access token. It is
+    ///   called again with `forceRefresh: true` if the server rejects the
+    ///   token, so a session that expired mid-screen recovers without the user
+    ///   noticing.
+    public init(
+        serverURL: URL,
+        publishableKey: String,
+        rxlabUserID: String,
+        email: String? = nil,
+        displayName: String? = nil,
+        userToken: @escaping UserTokenProvider,
+        session: URLSession = .shared
+    ) {
+        self.serverURL = serverURL
+        self.apiKey = publishableKey
+        self.user = UserIdentity(
+            rxlabUserID: rxlabUserID,
+            email: email,
+            displayName: displayName
+        )
+        self.session = session
+        self.encoder = JSONEncoder()
+        self.decoder = Self.makeDecoder()
+        self.userTokenProvider = userToken
     }
 
     // MARK: Storefront and entitlements
@@ -479,10 +540,18 @@ public final class Client {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
 
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw ClientError.invalidResponse
+        var (data, http) = try await send(request, refreshingUserToken: false)
+
+        // A publishable key's request is only as good as the token it carries.
+        // An access token that expired while a screen sat open is the ordinary
+        // case, not an error to surface, so ask for a fresh one and try once
+        // more. Anything still failing after that is the caller's to handle.
+        if http.statusCode == 401,
+           !acceptedStatusCodes.contains(401),
+           userTokenProvider != nil {
+            (data, http) = try await send(request, refreshingUserToken: true)
         }
+
         guard acceptedStatusCodes.contains(http.statusCode) else {
             throw ClientError.server(
                 statusCode: http.statusCode,
@@ -490,11 +559,30 @@ public final class Client {
                 responseBody: String(data: data, encoding: .utf8)
             )
         }
-        do {
-            return try decoder.decode(Response.self, from: data)
-        } catch {
-            throw error
+        return try decoder.decode(Response.self, from: data)
+    }
+
+    /// Attaches the user token, if this client carries one, and dispatches.
+    private func send(
+        _ request: URLRequest,
+        refreshingUserToken: Bool
+    ) async throws -> (Data, HTTPURLResponse) {
+        var request = request
+        if let userTokenProvider {
+            let token: String
+            do {
+                token = try await userTokenProvider(refreshingUserToken)
+            } catch {
+                throw ClientError.userTokenUnavailable(error)
+            }
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw ClientError.invalidResponse
+        }
+        return (data, http)
     }
 
     private func url(for path: String) -> URL {
