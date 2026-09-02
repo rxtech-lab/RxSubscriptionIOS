@@ -130,10 +130,23 @@ public final class Client {
 
     // MARK: Storefront and entitlements
 
+    /// Fetches the published, application-specific paywall tree.
+    ///
+    /// A publishable client sends its API key together with the signed-in
+    /// user's OAuth access token. The backend verifies the token's OAuth client
+    /// id against the key's allow-list before returning the paywall.
+    ///
+    /// Prices come back from the App Store — see ``storePlatform``.
+    public func paywall() async throws -> PaywallDocument {
+        try await get("api/v1/paywall", query: [storePlatformQuery])
+    }
+
+    /// The purchasable catalog, priced for the App Store — see ``storePlatform``.
     public func catalog(includeEligibility: Bool = true) async throws -> Catalog {
         try await get(
             "api/v1/catalog",
-            query: includeEligibility ? [query("rxlabUserId", user.rxlabUserID)] : []
+            query: [storePlatformQuery]
+                + (includeEligibility ? [query("rxlabUserId", user.rxlabUserID)] : [])
         )
     }
 
@@ -612,6 +625,18 @@ public final class Client {
             query("to", Self.apiDateFormatter.string(from: to)),
             query("granularity", granularity.rawValue),
         ].compactMap { $0 }
+    }
+
+    /// The platform whose prices the storefront endpoints should quote.
+    ///
+    /// A plan is routinely sold at one price through Stripe and another from an
+    /// App Store price tier, so the server prices its catalog and paywall for
+    /// whoever asked. This client always buys through StoreKit — on iOS and on
+    /// macOS alike, which share one set of App Store products — so it names the
+    /// platform outright instead of leaving the server to infer it from a user
+    /// agent the host app is free to replace.
+    private var storePlatformQuery: URLQueryItem {
+        query("platform", "ios")
     }
 
     private func query(_ name: String, _ value: String) -> URLQueryItem {

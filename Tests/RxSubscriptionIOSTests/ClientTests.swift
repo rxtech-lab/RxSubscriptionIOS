@@ -57,11 +57,15 @@ final class ClientTests: XCTestCase {
         URLProtocolStub.handler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Api-Key"), "rxs_sandbox_test")
             XCTAssertEqual(request.url?.path, "/api/v1/catalog")
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+                .queryItems
             XCTAssertEqual(
-                URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
-                    .queryItems?.first(where: { $0.name == "rxlabUserId" })?.value,
+                items?.first(where: { $0.name == "rxlabUserId" })?.value,
                 "user-42"
             )
+            // Without this the server falls back to reading the user agent, and
+            // a host app that replaces it would be quoted Stripe prices.
+            XCTAssertEqual(items?.first(where: { $0.name == "platform" })?.value, "ios")
             return (200, Self.catalogJSON)
         }
 
@@ -70,6 +74,18 @@ final class ClientTests: XCTestCase {
         XCTAssertEqual(catalog.plans.first?.purchaseOptions.last?.provider, .appleAppStore)
         XCTAssertEqual(catalog.plans.first?.purchaseOptions.last?.productID, "app.pro.monthly")
         XCTAssertEqual(catalog.topups.first?.eligible, true)
+    }
+
+    func testCatalogWithoutEligibilityStillAsksForAppStorePrices() async throws {
+        URLProtocolStub.handler = { request in
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+                .queryItems
+            XCTAssertNil(items?.first(where: { $0.name == "rxlabUserId" }))
+            XCTAssertEqual(items?.first(where: { $0.name == "platform" })?.value, "ios")
+            return (200, Self.catalogJSON)
+        }
+
+        _ = try await client.catalog(includeEligibility: false)
     }
 
     func testUsageDenialAtHTTP402DecodesAsResult() async throws {

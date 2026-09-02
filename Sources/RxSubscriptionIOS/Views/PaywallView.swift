@@ -35,16 +35,21 @@ public enum PaywallSection: String, CaseIterable, Hashable, Identifiable, Sendab
     }
 }
 
-/// A configurable subscription surface with a host-app supplied SwiftUI header.
-/// Pass one section for a focused screen or several sections for a segmented dashboard.
+/// A configurable subscription surface.
+///
+/// `.local` preserves the package's section-based screens and optional host
+/// header. `.server` renders the complete published tree returned by the
+/// backend, so `sections`, `initialSection`, and `header` do not apply.
 public struct PaywallView<Header: View>: View {
     private let client: Client
+    private let paywall: PaywallSource
     private let sections: [PaywallSection]
     private let header: Header
     @State private var selection: PaywallSection
 
     public init(
         client: Client,
+        paywall: PaywallSource = .local,
         sections: [PaywallSection] = [.plans, .topUps],
         initialSection: PaywallSection? = nil,
         @ViewBuilder header: () -> Header
@@ -53,12 +58,22 @@ public struct PaywallView<Header: View>: View {
         let unique = sections.filter { seen.insert($0).inserted }
         let available = unique.isEmpty ? [.plans] : unique
         self.client = client
+        self.paywall = paywall
         self.sections = available
         self.header = header()
         _selection = State(initialValue: initialSection.flatMap { available.contains($0) ? $0 : nil } ?? available[0])
     }
 
     public var body: some View {
+        switch paywall {
+        case .local:
+            localPaywall
+        case .server:
+            ServerPaywallView(client: client)
+        }
+    }
+
+    private var localPaywall: some View {
         VStack(spacing: 0) {
             // Header
             if !(header is EmptyView) {
@@ -102,10 +117,11 @@ public struct PaywallView<Header: View>: View {
 public extension PaywallView where Header == EmptyView {
     init(
         client: Client,
+        paywall: PaywallSource = .local,
         sections: [PaywallSection] = [.plans, .topUps],
         initialSection: PaywallSection? = nil
     ) {
-        self.init(client: client, sections: sections, initialSection: initialSection) {
+        self.init(client: client, paywall: paywall, sections: sections, initialSection: initialSection) {
             EmptyView()
         }
     }
