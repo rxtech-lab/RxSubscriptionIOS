@@ -5,7 +5,7 @@
 - a typed client for every public `/api/v1` endpoint;
 - StoreKit 2 product loading, purchase fulfillment, and restore support;
 - reusable SwiftUI plan, top-up, usage, balance, and balance-history screens;
-- a section-selectable paywall with a host-app supplied SwiftUI header.
+- local and server-driven SwiftUI paywalls, including native StoreKit actions.
 
 The package requires iOS 26+, macOS 26+, and Swift 5.9+.
 
@@ -87,11 +87,13 @@ SubscriptionPlanView(client: subscriptions) {
 }
 ```
 
-Use `PaywallView` to expose one section or a segmented set of sections with a single custom header:
+`PaywallView` defaults to `.local`, which exposes one section or a segmented set
+of sections with a host-app supplied header:
 
 ```swift
 PaywallView(
     client: subscriptions,
+    paywall: .local,
     sections: [.plans, .topUps, .usage, .balances],
     initialSection: .plans
 ) {
@@ -104,6 +106,39 @@ For a focused screen, pass only one section:
 ```swift
 PaywallView(client: subscriptions, sections: [.usage])
 ```
+
+Use `.server` to fetch `GET /api/v1/paywall` and recursively render the published
+SwiftUI tree assigned to the application:
+
+```swift
+PaywallView(client: subscriptions, paywall: .server)
+```
+
+The server document controls layout, theme, text, images, product lists, links,
+and purchase, restore, dismiss, open-URL, and product-selection actions. Product
+lists arrive with the application's active plans and display prices already
+resolved. Pull to refresh fetches the currently published design again.
+
+A `TabView` node draws a tab bar and shows one child at a time — tab *n* is
+child *n* — so a design can put monthly and yearly offers on their own pages.
+A product list can instead carry its own period switcher: its `periodOptions`
+arrive resolved, each naming the plans it reveals and the one to preselect.
+Both move the selection with the buyer, so Continue always buys the plan they
+are looking at rather than one left selected on a page they navigated away
+from.
+
+Both this request and `catalog()` send `platform=ios`, so a plan sold from an
+App Store price tier is labelled with that price rather than with the price the
+same plan costs through Stripe. The server can infer the platform from the user
+agent, but the client names it outright so a host app that replaces the user
+agent cannot end up showing web prices next to a StoreKit purchase.
+
+For a publishable client, this request uses the configured key as `X-Api-Key`
+and the access token returned by `userToken` as `Authorization: Bearer`. The
+OAuth client ID is the verified `client_id` claim in that token and must be in
+the publishable key's allowed-client list in RxSubscription; it is not sent as
+an unverified query parameter. A secret-key client can fetch the same endpoint
+without a user token, but a secret key must not ship in an app.
 
 ## StoreKit lifecycle
 
@@ -143,7 +178,7 @@ The client covers the backend's complete public API surface.
 
 | Area | Methods |
 | --- | --- |
-| Catalog and access | `catalog`, `entitlements` |
+| Catalog, paywall, and access | `catalog`, `paywall`, `entitlements` |
 | Balances | `balances`, `adjustBalance`, `ledger`, `consumptionStatistics` |
 | Reservations | `reserveBalance`, both `reservation` overloads, `increaseReservation`, `settleReservation`, `releaseReservation` |
 | Usage | `usage`, `recordUsage`, `usageStatistics` |
