@@ -42,6 +42,45 @@ public extension Client {
         }
     }
 
+    /// Forwards StoreKit transactions that arrive outside a purchase call.
+    ///
+    /// Renewals, Ask-to-Buy approvals, purchases made on another device, and
+    /// anything interrupted mid-flight all land on `Transaction.updates` rather
+    /// than as the result of ``purchaseApple(productID:quantity:)``. Without an
+    /// observer they are never finished, so StoreKit re-delivers them on every
+    /// launch and the app's own view of the entitlement lags.
+    ///
+    /// The server is still the authority — App Store Server Notifications reach
+    /// it whether or not the app is running — so a submission that fails here
+    /// is logged past rather than retried: the transaction stays unfinished and
+    /// StoreKit will offer it again.
+    ///
+    /// Start this once, early, and hold the returned task for the lifetime of
+    /// the session; cancelling it stops the observation.
+    ///
+    /// - Parameter onFulfillment: Called on the main actor after each accepted
+    ///   transaction, so a store can refresh its cached balance.
+    func observeTransactionUpdates(
+        onFulfillment: (@MainActor (AppleFulfillment) -> Void)? = nil
+    ) -> Task<Void, Never> {
+        Task { [weak self] in
+            for await verification in Transaction.updates {
+                guard let self else { return }
+                guard case .verified(let transaction) = verification else { continue }
+                do {
+                    let fulfillment = try await self.submitAppleTransaction(
+                        verification.jwsRepresentation
+                    )
+                    await transaction.finish()
+                    onFulfillment?(fulfillment)
+                } catch {
+                    // Deliberately left unfinished — see above.
+                    continue
+                }
+            }
+        }
+    }
+
     /// Presents Apple's restore sheet, reconciles every current entitlement, and finishes it.
     @discardableResult
     func restoreApplePurchases() async throws -> [AppleFulfillment] {
