@@ -25,6 +25,7 @@ public enum ClientError: Error, LocalizedError {
     case invalidResponse
     case server(statusCode: Int, payload: APIErrorPayload?, responseBody: String?)
     case storeProductNotFound(String)
+    case inactiveSubscriptionTransaction
     case unverifiedStoreTransaction
     case userTokenUnavailable(any Error)
 
@@ -36,6 +37,7 @@ public enum ClientError: Error, LocalizedError {
         case .server(_, let payload, let body):
             return payload?.errorDescription ?? payload?.error ?? body ?? "The subscription request failed."
         case .storeProductNotFound(let id): return "App Store product not found: \(id)"
+        case .inactiveSubscriptionTransaction: return "The transaction was processed, but the subscription is not active. No active subscription was confirmed. Please try subscribing again."
         case .unverifiedStoreTransaction: return "StoreKit could not verify the transaction on this device."
         case .userTokenUnavailable(let error):
             return "Could not read the signed-in user's session: \(error.localizedDescription)"

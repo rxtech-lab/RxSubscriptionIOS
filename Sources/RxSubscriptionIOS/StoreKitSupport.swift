@@ -21,6 +21,14 @@ public extension Client {
         guard let product = try await Product.products(for: [productID]).first else {
             throw ClientError.storeProductNotFound(productID)
         }
+        // Reconcile previously interrupted purchases before asking StoreKit for
+        // another purchase. Never finish a transaction the server rejects.
+        for await verification in Transaction.unfinished {
+            guard case .verified(let transaction) = verification,
+                  transaction.productID == productID else { continue }
+            _ = try await submitAppleTransaction(verification.jwsRepresentation)
+            await transaction.finish()
+        }
         let account = try await appleAccountToken()
         var options: Set<Product.PurchaseOption> = [.appAccountToken(account.appAccountToken)]
         if quantity > 1 { options.insert(.quantity(quantity)) }
@@ -32,6 +40,18 @@ public extension Client {
             }
             let fulfillment = try await submitAppleTransaction(verification.jwsRepresentation)
             await transaction.finish()
+            // A successful reconciliation can describe an expired purchase.
+            // Finish it above, but do not tell the paywall a subscription is active.
+            if product.type == .autoRenewable {
+                if let subscription = fulfillment.subscription {
+                    guard ["active", "trialing"].contains(subscription.status) else {
+                        throw ClientError.inactiveSubscriptionTransaction
+                    }
+                } else if fulfillment.transaction.revokedAt != nil ||
+                            (fulfillment.transaction.expiresAt.map { $0 <= Date() } ?? true) {
+                    throw ClientError.inactiveSubscriptionTransaction
+                }
+            }
             return .completed(fulfillment)
         case .pending:
             return .pending
