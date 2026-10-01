@@ -284,7 +284,7 @@ private final class SubscriptionPlanViewModel: ObservableObject {
 
     let client: Client
     var hasAppleProducts: Bool {
-        plans.contains { plan in plan.purchaseOptions.contains { $0.provider == .appleAppStore } }
+        client.useIap && plans.contains { plan in plan.purchaseOptions.contains { $0.provider == .appleAppStore } }
     }
 
     init(client: Client) { self.client = client }
@@ -297,9 +297,7 @@ private final class SubscriptionPlanViewModel: ObservableObject {
         do {
             let catalog = try await client.catalog()
             plans = catalog.plans
-            let ids = catalog.plans.flatMap(\.purchaseOptions).compactMap { option in
-                option.provider == .appleAppStore ? option.productID : nil
-            }
+            let ids = catalog.plans.compactMap { appleOption(for: $0)?.productID }
             let loaded = ids.isEmpty ? [] : try await client.storeProducts(productIDs: ids)
             products = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
         } catch {
@@ -345,8 +343,10 @@ private final class SubscriptionPlanViewModel: ObservableObject {
         }
     }
 
+    /// The StoreKit option to buy through, or `nil` to use Stripe Checkout.
     private func appleOption(for plan: SubscriptionPlan) -> PurchaseOption? {
-        plan.purchaseOptions.first { $0.provider == .appleAppStore && $0.flow == .storeKit }
+        guard client.useIap else { return nil }
+        return plan.purchaseOptions.first { $0.provider == .appleAppStore && $0.flow == .storeKit }
     }
 
     private func show(_ message: String) {

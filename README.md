@@ -4,6 +4,8 @@
 
 - a typed client for every public `/api/v1` endpoint;
 - StoreKit 2 product loading, purchase fulfillment, and restore support;
+- Stripe Checkout, coupon, invoice, and billing-portal support;
+- an app-level `useIap` switch that picks StoreKit or Stripe for every purchase;
 - reusable SwiftUI plan, top-up, usage, balance, and balance-history screens;
 - local and server-driven SwiftUI paywalls, including native StoreKit actions.
 
@@ -12,7 +14,7 @@ The package requires iOS 26+, macOS 26+, and Swift 5.9+.
 ## Add the package
 
 ```swift
-.package(url: "https://github.com/rxtech-lab/RxSubscriptionIOS.git", from: "0.2.0")
+.package(url: "https://github.com/rxtech-lab/RxSubscriptionIOS.git", from: "1.2.0")
 ```
 
 Or in Xcode, **File → Add Package Dependencies…** with that URL. Import the library where it is used:
@@ -23,7 +25,7 @@ import RxSubscriptionIOS
 
 ## Configure a client
 
-Create one client for the currently signed-in RxLab user. The key controls whether the server uses sandbox or production data.
+Create one client for the currently signed-in RxLab user. The key controls whether the server uses sandbox or production data, and `useIap` controls whether purchases go through StoreKit or Stripe — see [Choosing StoreKit or Stripe](#choosing-storekit-or-stripe).
 
 Which initializer you want depends on the kind of key you hold. **In an app, use a publishable key.**
 
@@ -60,6 +62,48 @@ let subscriptions = Client(
 ```
 
 A secret key reaches every endpoint and names whichever user it likes, so it must never ship in an app bundle — mobile app secrets can be extracted, and this one can credit any balance for any user.
+
+## Choosing StoreKit or Stripe
+
+The app — not the package — decides how its users pay, by passing `useIap` to
+either initializer. It defaults to `true`, and the package never looks at the
+OS to override it. For example, to sell through the App Store on iOS and
+through Stripe on macOS:
+
+```swift
+#if os(iOS)
+let useIap = true   // App Store in-app purchase
+#else
+let useIap = false  // Stripe Checkout
+#endif
+
+let subscriptions = Client(
+    serverURL: URL(string: "https://subscription.example.com")!,
+    publishableKey: configuration.subscriptionPublishableKey,
+    rxlabUserID: session.userID,
+    userToken: { forceRefresh in
+        try await session.accessToken(forceRefresh: forceRefresh)
+    },
+    useIap: useIap
+)
+```
+
+Any other rule works the same way — a remote flag, a storefront check, a build
+setting — as long as the app resolves it to a `Bool` when it creates the client.
+
+| | `useIap: true` | `useIap: false` |
+| --- | --- | --- |
+| Item with an App Store product | StoreKit purchase | Stripe Checkout |
+| Item without an App Store product | Stripe Checkout | Stripe Checkout |
+| Prices in `catalog()` and `paywall()` | App Store (`platform=ios`) | Stripe (`platform=web`) |
+| Price label in the views | Apple's localized price | Catalog price |
+| Restore Purchases | Calls StoreKit | Hidden on the plan screen; the server paywall's restore action shows a message instead of prompting for an Apple ID |
+
+Stripe Checkout opens through SwiftUI's `openURL`, and the backend fulfills the
+purchase from Stripe's webhook, so refresh entitlements when the app becomes
+active again. `purchaseApple` and the other StoreKit methods stay callable
+directly regardless of `useIap`; the switch only governs the package's views and
+storefront pricing.
 
 ## SwiftUI views
 
@@ -127,11 +171,11 @@ Both move the selection with the buyer, so Continue always buys the plan they
 are looking at rather than one left selected on a page they navigated away
 from.
 
-Both this request and `catalog()` send `platform=ios`, so a plan sold from an
-App Store price tier is labelled with that price rather than with the price the
-same plan costs through Stripe. The server can infer the platform from the user
-agent, but the client names it outright so a host app that replaces the user
-agent cannot end up showing web prices next to a StoreKit purchase.
+Both this request and `catalog()` name the store the client buys through —
+`platform=ios` when `useIap` is on, `platform=web` when it is off — so every
+product is labelled with the price the buyer will actually pay. The server can infer the platform from the user agent, but the
+client names it outright so a host app that replaces the user agent cannot end
+up showing web prices next to a StoreKit purchase.
 
 For a publishable client, this request uses the configured key as `X-Api-Key`
 and the access token returned by `userToken` as `Authorization: Bearer`. The
@@ -142,7 +186,7 @@ without a user token, but a secret key must not ship in an app.
 
 ## StoreKit lifecycle
 
-When an Apple mapping is present in the catalog, the views prefer StoreKit and show Apple's localized price. The package performs the required sequence:
+When `useIap` is on and an Apple mapping is present in the catalog, the views prefer StoreKit and show Apple's localized price. The package performs the required sequence:
 
 1. requests the stable App Store account token from the backend;
 2. attaches it as StoreKit's `appAccountToken`;
@@ -150,7 +194,7 @@ When an Apple mapping is present in the catalog, the views prefer StoreKit and s
 4. submits the signed JWS to the backend for authoritative fulfillment;
 5. finishes the StoreKit transaction only after fulfillment succeeds.
 
-The plan screen includes Restore Purchases. You can also invoke StoreKit directly:
+With `useIap` on, the plan screen includes Restore Purchases. You can also invoke StoreKit directly:
 
 ```swift
 let outcome = try await subscriptions.purchaseApple(
@@ -178,6 +222,7 @@ The client covers the backend's complete public API surface.
 
 | Area | Methods |
 | --- | --- |
+| Configuration | `serverURL`, `apiKey`, `user`, `useIap` |
 | Catalog, paywall, and access | `catalog`, `paywall`, `entitlements` |
 | Balances | `balances`, `adjustBalance`, `ledger`, `consumptionStatistics` |
 | Reservations | `reserveBalance`, both `reservation` overloads, `increaseReservation`, `settleReservation`, `releaseReservation` |
@@ -218,4 +263,4 @@ The backend returns usage denials with HTTP 402. `recordUsage` decodes those res
 swift test
 ```
 
-The test suite verifies authentication and user scoping, StoreKit catalog decoding, error payloads, HTTP 402 usage behavior, date handling, formatting, and request/response coverage for every public backend route. It also covers the publishable-key path: that both credentials are sent, that a 401 triggers exactly one refreshed retry and no more, that a secret-key client is never retried, and that a failed token lookup surfaces as `ClientError.userTokenUnavailable` rather than as a network error.
+The test suite verifies authentication and user scoping, StoreKit catalog decoding, the `useIap` default and the Stripe pricing it selects when off, error payloads, HTTP 402 usage behavior, date handling, formatting, and request/response coverage for every public backend route. It also covers the publishable-key path: that both credentials are sent, that a 401 triggers exactly one refreshed retry and no more, that a secret-key client is never retried, and that a failed token lookup surfaces as `ClientError.userTokenUnavailable` rather than as a network error.

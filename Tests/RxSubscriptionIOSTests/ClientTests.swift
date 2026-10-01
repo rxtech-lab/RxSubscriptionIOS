@@ -88,6 +88,32 @@ final class ClientTests: XCTestCase {
         _ = try await client.catalog(includeEligibility: false)
     }
 
+    func testUseIapDefaultsToTrue() {
+        XCTAssertTrue(client.useIap)
+    }
+
+    func testStripeClientAsksForStripePrices() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolStub.self]
+        let stripeClient = Client(
+            serverURL: URL(string: "https://subscriptions.example.test")!,
+            apiKey: "rxs_sandbox_test",
+            rxlabUserID: "user-42",
+            useIap: false,
+            session: URLSession(configuration: configuration)
+        )
+        URLProtocolStub.handler = { request in
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+                .queryItems
+            // An app buying through Stripe must not be shown App Store prices.
+            XCTAssertEqual(items?.first(where: { $0.name == "platform" })?.value, "web")
+            return (200, Self.catalogJSON)
+        }
+
+        XCTAssertFalse(stripeClient.useIap)
+        _ = try await stripeClient.catalog()
+    }
+
     func testUsageDenialAtHTTP402DecodesAsResult() async throws {
         URLProtocolStub.handler = { request in
             XCTAssertEqual(request.httpMethod, "POST")
