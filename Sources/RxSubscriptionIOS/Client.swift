@@ -52,12 +52,12 @@ public enum ClientError: Error, LocalizedError {
 ///
 /// Which initializer you use depends on the kind of key you hold:
 ///
-/// - ``init(serverURL:publishableKey:rxlabUserID:email:displayName:userToken:session:)``
+/// - ``init(serverURL:publishableKey:rxlabUserID:email:displayName:userToken:useIap:session:)``
 ///   is the one an app wants. A publishable key is safe to ship in a binary
 ///   because it does nothing on its own: every request also carries the
 ///   signed-in user's access token, and the server acts only for whoever that
 ///   token identifies.
-/// - ``init(serverURL:apiKey:rxlabUserID:email:displayName:session:)`` takes a
+/// - ``init(serverURL:apiKey:rxlabUserID:email:displayName:useIap:session:)`` takes a
 ///   secret key, which reaches every endpoint and names its own user. That
 ///   belongs on a server. Shipping one inside an app lets anyone who extracts
 ///   it grant themselves anything.
@@ -66,6 +66,16 @@ public final class Client {
     public let serverURL: URL
     public let apiKey: String
     public let user: UserIdentity
+
+    /// Whether plans and top-ups are bought through StoreKit.
+    ///
+    /// When `true`, the views buy any item that has an App Store product
+    /// through StoreKit and show App Store prices. When `false`, they ignore
+    /// App Store products, open Stripe Checkout for everything, and the
+    /// catalog and paywall are priced for Stripe. The package never chooses
+    /// this for you: an app that sells through the App Store on iOS but
+    /// through Stripe on macOS passes a different value on each.
+    public let useIap: Bool
 
     private let session: URLSession
     private let encoder: JSONEncoder
@@ -82,10 +92,12 @@ public final class Client {
         rxlabUserID: String,
         email: String? = nil,
         displayName: String? = nil,
+        useIap: Bool = true,
         session: URLSession = .shared
     ) {
         self.serverURL = serverURL
         self.apiKey = apiKey
+        self.useIap = useIap
         self.user = UserIdentity(
             rxlabUserID: rxlabUserID,
             email: email,
@@ -108,6 +120,8 @@ public final class Client {
     ///   called again with `forceRefresh: true` if the server rejects the
     ///   token, so a session that expired mid-screen recovers without the user
     ///   noticing.
+    /// - Parameter useIap: Buy through StoreKit (`true`) or Stripe Checkout
+    ///   (`false`). See ``useIap``.
     public init(
         serverURL: URL,
         publishableKey: String,
@@ -115,10 +129,12 @@ public final class Client {
         email: String? = nil,
         displayName: String? = nil,
         userToken: @escaping UserTokenProvider,
+        useIap: Bool = true,
         session: URLSession = .shared
     ) {
         self.serverURL = serverURL
         self.apiKey = publishableKey
+        self.useIap = useIap
         self.user = UserIdentity(
             rxlabUserID: rxlabUserID,
             email: email,
@@ -138,12 +154,12 @@ public final class Client {
     /// user's OAuth access token. The backend verifies the token's OAuth client
     /// id against the key's allow-list before returning the paywall.
     ///
-    /// Prices come back from the App Store — see ``storePlatform``.
+    /// Prices follow the store ``useIap`` selects.
     public func paywall() async throws -> PaywallDocument {
         try await get("api/v1/paywall", query: [storePlatformQuery])
     }
 
-    /// The purchasable catalog, priced for the App Store — see ``storePlatform``.
+    /// The purchasable catalog, priced for the store ``useIap`` selects.
     public func catalog(includeEligibility: Bool = true) async throws -> Catalog {
         try await get(
             "api/v1/catalog",
@@ -633,12 +649,12 @@ public final class Client {
     ///
     /// A plan is routinely sold at one price through Stripe and another from an
     /// App Store price tier, so the server prices its catalog and paywall for
-    /// whoever asked. This client always buys through StoreKit — on iOS and on
-    /// macOS alike, which share one set of App Store products — so it names the
-    /// platform outright instead of leaving the server to infer it from a user
-    /// agent the host app is free to replace.
+    /// whoever asked. The client names the store it will actually buy through —
+    /// the App Store when ``useIap`` is on, Stripe otherwise — instead of
+    /// leaving the server to infer it from a user agent the host app is free
+    /// to replace.
     private var storePlatformQuery: URLQueryItem {
-        query("platform", "ios")
+        query("platform", useIap ? "ios" : "web")
     }
 
     private func query(_ name: String, _ value: String) -> URLQueryItem {

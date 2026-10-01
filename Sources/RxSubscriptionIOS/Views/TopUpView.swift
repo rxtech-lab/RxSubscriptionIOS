@@ -206,9 +206,7 @@ private final class TopUpViewModel: ObservableObject {
         do {
             let catalog = try await client.catalog()
             topUps = catalog.topups
-            let ids = catalog.topups.flatMap(\.purchaseOptions).compactMap { option in
-                option.provider == .appleAppStore ? option.productID : nil
-            }
+            let ids = catalog.topups.compactMap { appleOption(for: $0)?.productID }
             let loaded = ids.isEmpty ? [] : try await client.storeProducts(productIDs: ids)
             products = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
         } catch {
@@ -248,8 +246,10 @@ private final class TopUpViewModel: ObservableObject {
         }
     }
 
+    /// The StoreKit option to buy through, or `nil` to use Stripe Checkout.
     private func appleOption(for topUp: TopUpProduct) -> PurchaseOption? {
-        topUp.purchaseOptions.first { $0.provider == .appleAppStore && $0.flow == .storeKit }
+        guard client.useIap else { return nil }
+        return topUp.purchaseOptions.first { $0.provider == .appleAppStore && $0.flow == .storeKit }
     }
 
     private func show(_ message: String) {

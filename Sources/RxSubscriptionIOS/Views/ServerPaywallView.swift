@@ -139,7 +139,7 @@ private final class ServerPaywallViewModel: ObservableObject {
         defer { processingID = nil }
 
         do {
-            if let option = product.purchaseOptions.first(where: {
+            if client.useIap, let option = product.purchaseOptions.first(where: {
                 $0.provider == .appleAppStore && $0.flow == .storeKit && $0.productID != nil
             }), let storeProductID = option.productID {
                 switch try await client.purchaseApple(productID: storeProductID) {
@@ -160,6 +160,13 @@ private final class ServerPaywallViewModel: ObservableObject {
     }
 
     func restorePurchases() async {
+        // Stripe purchases belong to the signed-in account, so there is no
+        // store receipt to sync — and asking StoreKit would prompt for an
+        // Apple ID the app does not buy through.
+        guard client.useIap else {
+            show("Purchases made with your account are already restored.")
+            return
+        }
         isRestoring = true
         defer { isRestoring = false }
 
