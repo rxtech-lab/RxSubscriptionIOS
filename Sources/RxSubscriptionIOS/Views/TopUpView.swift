@@ -1,8 +1,10 @@
 import SwiftUI
+import StoreKit
 
 public struct TopUpView<Header: View>: View {
     @StateObject private var model: TopUpViewModel
     @Environment(\.openURL) private var openURL
+    @Environment(\.purchase) private var purchaseAction
     private let header: Header
 
     public init(client: Client, @ViewBuilder header: () -> Header) {
@@ -130,7 +132,7 @@ public struct TopUpView<Header: View>: View {
 
                 Button {
                     Task {
-                        if let url = await model.purchase(topUp) { openURL(url) }
+                        if let url = await model.purchase(topUp, purchaseAction: purchaseAction) { openURL(url) }
                     }
                 } label: {
                     Group {
@@ -221,13 +223,13 @@ private final class TopUpViewModel: ObservableObject {
         return SubscriptionFormatting.price(cents: topUp.priceAmountCents, currency: topUp.currency)
     }
 
-    func purchase(_ topUp: TopUpProduct) async -> URL? {
+    func purchase(_ topUp: TopUpProduct, purchaseAction: PurchaseAction? = nil) async -> URL? {
         guard topUp.eligible != false else { return nil }
         processingID = topUp.id
         defer { processingID = nil }
         do {
             if let productID = appleOption(for: topUp)?.productID {
-                let outcome = try await client.purchaseApple(productID: productID)
+                let outcome = try await client.purchaseApple(productID: productID, purchaseAction: purchaseAction)
                 switch outcome {
                 case .completed:
                     show("Balance added successfully.")

@@ -1,5 +1,6 @@
 import Foundation
 import StoreKit
+import SwiftUI
 
 @MainActor
 public extension Client {
@@ -17,7 +18,12 @@ public extension Client {
     }
 
     /// Purchases one mapped StoreKit product, waits for server fulfillment, then finishes it.
-    func purchaseApple(productID: String, quantity: Int = 1) async throws -> StorePurchaseOutcome {
+    /// Pass the initiating SwiftUI view's `@Environment(\.purchase)` action.
+    /// This is required on visionOS to present confirmation in the correct scene.
+    func purchaseApple(productID: String, quantity: Int = 1, purchaseAction: PurchaseAction? = nil) async throws -> StorePurchaseOutcome {
+        #if os(visionOS)
+        guard purchaseAction != nil else { throw ClientError.purchasePresentationRequired }
+        #endif
         guard let product = try await Product.products(for: [productID]).first else {
             throw ClientError.storeProductNotFound(productID)
         }
@@ -33,7 +39,17 @@ public extension Client {
         var options: Set<Product.PurchaseOption> = [.appAccountToken(account.appAccountToken)]
         if quantity > 1 { options.insert(.quantity(quantity)) }
 
-        switch try await product.purchase(options: options) {
+        let result: Product.PurchaseResult
+        if let purchaseAction {
+            result = try await purchaseAction(product, options: options)
+        } else {
+            #if os(visionOS)
+            throw ClientError.purchasePresentationRequired
+            #else
+            result = try await product.purchase(options: options)
+            #endif
+        }
+        switch result {
         case .success(let verification):
             guard case .verified(let transaction) = verification else {
                 throw ClientError.unverifiedStoreTransaction

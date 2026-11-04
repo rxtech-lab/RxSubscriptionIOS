@@ -264,3 +264,24 @@ swift test
 ```
 
 The test suite verifies authentication and user scoping, StoreKit catalog decoding, the `useIap` default and the Stripe pricing it selects when off, error payloads, HTTP 402 usage behavior, date handling, formatting, and request/response coverage for every public backend route. It also covers the publishable-key path: that both credentials are sent, that a 401 triggers exactly one refreshed retry and no more, that a secret-key client is never retried, and that a failed token lookup surfaces as `ClientError.userTokenUnavailable` rather than as a network error.
+
+### visionOS purchases
+
+The package supports visionOS 26. Its built-in paywalls use the initiating
+SwiftUI scene's StoreKit purchase action. Custom purchase views should pass
+that same environment action:
+
+```swift
+@Environment(\.purchase) private var purchase
+
+// From an async action in the view:
+let outcome = try await client.purchaseApple(
+    productID: productID,
+    purchaseAction: purchase
+)
+```
+
+Import StoreKit in the purchase view. On visionOS, omitting the action throws
+`ClientError.purchasePresentationRequired` before any purchase or reconciliation
+starts. Existing iOS/macOS calls remain source compatible. Transaction verification,
+server fulfillment, and finishing behavior are unchanged.

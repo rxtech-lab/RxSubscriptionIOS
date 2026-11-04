@@ -1,8 +1,10 @@
 import SwiftUI
+import StoreKit
 
 public struct SubscriptionPlanView<Header: View>: View {
     @StateObject private var model: SubscriptionPlanViewModel
     @Environment(\.openURL) private var openURL
+    @Environment(\.purchase) private var purchaseAction
     private let header: Header
     @State private var selectedPlanID: String?
 
@@ -243,7 +245,7 @@ public struct SubscriptionPlanView<Header: View>: View {
         guard let id = selectedPlanID,
               let plan = model.plans.first(where: { $0.id == id }) else { return }
         Task {
-            if let url = await model.purchase(plan) { openURL(url) }
+            if let url = await model.purchase(plan, purchaseAction: purchaseAction) { openURL(url) }
         }
     }
 
@@ -312,12 +314,12 @@ private final class SubscriptionPlanViewModel: ObservableObject {
         return SubscriptionFormatting.price(cents: plan.priceAmountCents, currency: plan.currency)
     }
 
-    func purchase(_ plan: SubscriptionPlan) async -> URL? {
+    func purchase(_ plan: SubscriptionPlan, purchaseAction: PurchaseAction? = nil) async -> URL? {
         processingID = plan.id
         defer { processingID = nil }
         do {
             if let productID = appleOption(for: plan)?.productID {
-                let outcome = try await client.purchaseApple(productID: productID)
+                let outcome = try await client.purchaseApple(productID: productID, purchaseAction: purchaseAction)
                 switch outcome {
                 case .completed: show("Purchase fulfilled successfully.")
                 case .pending: show("The purchase is pending approval.")
