@@ -50,3 +50,12 @@ jobs:
 
       - name: Build iOS 26 Release
         run: swift build --configuration release --triple arm64-apple-ios26.0 --sdk "$(xcrun --sdk iphoneos --show-sdk-path)"
+
+  build-visionos:
+    name: Build visionOS Package
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build visionOS Release
+        run: swift build --configuration release --triple arm64-apple-xros26.0 --sdk "$(xcrun --sdk xros --show-sdk-path)"

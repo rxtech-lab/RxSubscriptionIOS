@@ -1,10 +1,12 @@
 import SwiftUI
+import StoreKit
 
 /// Loads and renders the published native-view tree from RxSubscription.
 struct ServerPaywallView: View {
     @StateObject private var model: ServerPaywallViewModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @Environment(\.purchase) private var purchaseAction
 
     init(client: Client) {
         _model = StateObject(wrappedValue: ServerPaywallViewModel(client: client))
@@ -66,7 +68,7 @@ struct ServerPaywallView: View {
             Task { await model.restorePurchases() }
         case .purchase(let productID):
             Task {
-                if let url = await model.purchase(productID: productID) {
+                if let url = await model.purchase(productID: productID, purchaseAction: purchaseAction) {
                     openURL(url)
                 }
             }
@@ -126,7 +128,7 @@ private final class ServerPaywallViewModel: ObservableObject {
         selectedProductID = productID
     }
 
-    func purchase(productID: String?) async -> URL? {
+    func purchase(productID: String?, purchaseAction: PurchaseAction? = nil) async -> URL? {
         let requested = productID ?? selectedProductID
         guard let requested,
               let product = products.first(where: { $0.id == requested || $0.key == requested })
@@ -142,7 +144,7 @@ private final class ServerPaywallViewModel: ObservableObject {
             if client.useIap, let option = product.purchaseOptions.first(where: {
                 $0.provider == .appleAppStore && $0.flow == .storeKit && $0.productID != nil
             }), let storeProductID = option.productID {
-                switch try await client.purchaseApple(productID: storeProductID) {
+                switch try await client.purchaseApple(productID: storeProductID, purchaseAction: purchaseAction) {
                 case .completed:
                     show("Purchase fulfilled successfully.")
                 case .pending:

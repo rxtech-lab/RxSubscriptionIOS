@@ -29,6 +29,14 @@ extension View {
     /// Card background: Liquid Glass on iOS 26+, regularMaterial otherwise.
     @ViewBuilder
     func cardGlass(cornerRadius: CGFloat = 18) -> some View {
+        #if os(visionOS)
+            self
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .strokeBorder(.quaternary, lineWidth: 0.5)
+                }
+        #else
         if #available(iOS 26, *) {
             self.glassEffect(in: .rect(cornerRadius: cornerRadius))
         } else {
@@ -39,21 +47,32 @@ extension View {
                         .strokeBorder(.quaternary, lineWidth: 0.5)
                 }
         }
+        #endif
     }
 
     /// Capsule badge with tinted glass on iOS 26+, tinted opacity fill otherwise.
     @ViewBuilder
     func tintedCapsule(_ color: Color) -> some View {
+        #if os(visionOS)
+            self.background(color.opacity(0.15), in: Capsule())
+        #else
         if #available(iOS 26, *) {
             self.glassEffect(.regular.tint(color), in: .capsule)
         } else {
             self.background(color.opacity(0.15), in: Capsule())
         }
+        #endif
     }
 
     /// Rounded-rect badge with tinted glass on iOS 26+, tinted opacity fill otherwise.
     @ViewBuilder
     func tintedRect(_ color: Color, cornerRadius: CGFloat = 12) -> some View {
+        #if os(visionOS)
+            self.background(
+                color.opacity(0.12),
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
+        #else
         if #available(iOS 26, *) {
             self.glassEffect(.regular.tint(color), in: .rect(cornerRadius: cornerRadius))
         } else {
@@ -62,6 +81,7 @@ extension View {
                 in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             )
         }
+        #endif
     }
 }
 
@@ -78,6 +98,11 @@ struct GlassButton: View {
     }
 
     var body: some View {
+        #if os(visionOS)
+            Button(title, action: action)
+                .buttonStyle(.bordered)
+                .disabled(isDisabled)
+        #else
         if #available(iOS 26, *) {
             Button(title, action: action)
                 .buttonStyle(.glass)
@@ -87,6 +112,7 @@ struct GlassButton: View {
                 .buttonStyle(.bordered)
                 .disabled(isDisabled)
         }
+        #endif
     }
 }
 
